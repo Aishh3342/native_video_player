@@ -2,7 +2,7 @@ import UIKit
 import AVFoundation
 
 
-/// updating package
+
 class NativeVideoPlayerView: UIView {
     private let playerLayer: AVPlayerLayer
 
