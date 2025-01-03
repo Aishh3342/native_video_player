@@ -27,14 +27,12 @@ public class NativeVideoPlayerViewController: NSObject, FlutterPlatformView {
     deinit {
         player.removeObserver(self, forKeyPath: "status")
         removeOnVideoCompletedObserver()
-
         player.replaceCurrentItem(with: nil)
     }
 
     public func view() -> UIView {
         playerView
     }
-
 }
 
 extension NativeVideoPlayerViewController: NativeVideoPlayerApiDelegate {
@@ -47,18 +45,34 @@ extension NativeVideoPlayerViewController: NativeVideoPlayerApiDelegate {
         else {
             return
         }
-        let videoAsset = isUrl ? AVURLAsset(url: uri, options: ["AVURLAssetHTTPHeaderFieldsKey": videoSource.headers]) : AVAsset(url: uri)
-        if !videoAsset.isPlayable {
-            api.onError(NSError(domain: "NativeVideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Video is not playable"]))
-            return
+
+        let videoAsset: AVAsset
+        if isUrl {
+            videoAsset = AVURLAsset(url: uri, options: ["AVURLAssetHTTPHeaderFieldsKey": videoSource.headers])
+        } else {
+            videoAsset = AVAsset(url: uri)
         }
-        let playerItem = AVPlayerItem(asset: videoAsset)
 
-        removeOnVideoCompletedObserver()
-        player.replaceCurrentItem(with: playerItem)
-        addOnVideoCompletedObserver()
+        // Load values asynchronously to avoid blocking the main thread
+        videoAsset.loadValuesAsynchronously(forKeys: ["playable", "tracks"]) { [weak self] in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
 
-        api.onPlaybackReady()
+                var error: NSError?
+                let isPlayable = videoAsset.statusOfValue(forKey: "playable", error: &error) == .loaded
+                if !isPlayable {
+                    self.api.onError(error ?? NSError(domain: "NativeVideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Video is not playable"]))
+                    return
+                }
+
+                let playerItem = AVPlayerItem(asset: videoAsset)
+                self.removeOnVideoCompletedObserver()
+                self.player.replaceCurrentItem(with: playerItem)
+                self.addOnVideoCompletedObserver()
+
+                self.api.onPlaybackReady()
+            }
+        }
     }
 
     func getVideoInfo() -> VideoInfo {
@@ -81,8 +95,7 @@ extension NativeVideoPlayerViewController: NativeVideoPlayerApiDelegate {
     func stop(completion: @escaping () -> Void) {
         player.pause()
         if #available(iOS 15, *) {
-            // on iOS 15 or newer
-            player.seek(to: CMTime.zero) { _ in completion()}
+            player.seek(to: CMTime.zero) { _ in completion() }
         } else {
             player.seek(to: CMTime.zero)
             completion()
@@ -153,7 +166,7 @@ extension NativeVideoPlayerViewController {
         context: UnsafeMutableRawPointer?
     ) {
         if keyPath == "status" {
-            switch (player.status) {
+            switch player.status {
             case .unknown:
                 break
             case .readyToPlay:
